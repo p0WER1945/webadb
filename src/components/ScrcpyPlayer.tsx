@@ -13,6 +13,7 @@ import {
 import { 
   AndroidKeyEventAction, 
   AndroidKeyCode,
+  AndroidKeyEventMeta,
   AndroidMotionEventAction
 } from '@yume-chan/scrcpy';
 
@@ -300,7 +301,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
       const payload = {
         action: AndroidKeyEventAction.Down,
         keyCode,
-        metaState: 0, // Simplified meta state
+        metaState: AndroidKeyEventMeta.None,
         repeat: 0,
       };
 
@@ -334,7 +335,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
       const payload = {
         action: AndroidKeyEventAction.Up,
         keyCode,
-        metaState: 0,
+        metaState: AndroidKeyEventMeta.None,
         repeat: 0,
       };
 
