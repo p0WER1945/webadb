@@ -11,6 +11,10 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.17",
+    "@yume-chan/adb": "^2.3.1",
+    "@yume-chan/adb-backend-webusb": "^0.0.19",
+    "@yume-chan/adb-credential-web": "^2.1.0",
+    "@yume-chan/stream-extra": "^2.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.17"
