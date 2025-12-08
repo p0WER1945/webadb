@@ -16,6 +16,7 @@ import {
   AndroidKeyEventMeta,
   AndroidMotionEventAction
 } from '@yume-chan/scrcpy';
+import { DeviceInputRecorder } from '../utils/DeviceInputRecorder';
 
 interface ScrcpyPlayerProps {
   device: Adb;
@@ -56,27 +57,75 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
   const runningRef = useRef(false);
   const clientRef = useRef<AdbScrcpyClient<any> | undefined>(undefined);
   const videoSizeRef = useRef<{ width: number; height: number } | undefined>(undefined);
+  const deviceInputRecorderRef = useRef<DeviceInputRecorder | undefined>(undefined);
 
   // Recording & Replay State
   const [isRecording, setIsRecording] = useState(false);
+  const [recordSource, setRecordSource] = useState<'web' | 'device'>('web');
   const [isReplaying, setIsReplaying] = useState(false);
   const [eventCount, setEventCount] = useState(0); // To force re-render when events change
   const recordedEventsRef = useRef<RecordedEvent[]>([]);
   const startTimeRef = useRef<number>(0);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback(async () => {
     recordedEventsRef.current = [];
     startTimeRef.current = Date.now();
     setIsRecording(true);
     setEventCount(0);
-  }, []);
+
+    if (recordSource === 'device') {
+        const recorder = new DeviceInputRecorder(device);
+        deviceInputRecorderRef.current = recorder;
+        
+        // Start recording in background
+        recorder.start((event) => {
+            if (!videoSizeRef.current) return;
+            const { width, height } = videoSizeRef.current;
+            
+            // Map normalized coords to pixels
+            const pointerX = event.x * width;
+            const pointerY = event.y * height;
+            
+            const action = event.action === 'down' ? AndroidMotionEventAction.Down :
+                           event.action === 'up' ? AndroidMotionEventAction.Up :
+                           AndroidMotionEventAction.Move;
+                           
+            const payload = {
+                action,
+                pointerId: BigInt(0),
+                pointerX: Math.max(0, Math.min(pointerX, width)),
+                pointerY: Math.max(0, Math.min(pointerY, height)),
+                videoWidth: width,
+                videoHeight: height,
+                pressure: action === AndroidMotionEventAction.Up ? 0 : 1,
+                actionButton: 0,
+                buttons: 1, // Simulate primary button
+            };
+            
+            recordedEventsRef.current.push({
+                type: 'touch',
+                timestamp: Date.now() - startTimeRef.current,
+                payload
+            });
+            setEventCount(prev => prev + 1);
+        }).catch (e => {
+            console.error('Device recording failed', e);
+            setStatus('Device recording failed');
+            setIsRecording(false);
+        });
+    }
+  }, [recordSource, device]);
 
   const stopRecording = useCallback(() => {
     setIsRecording(false);
+    if (deviceInputRecorderRef.current) {
+        deviceInputRecorderRef.current.stop();
+        deviceInputRecorderRef.current = undefined;
+    }
   }, []);
 
   const recordEvent = useCallback((type: 'touch' | 'scroll' | 'key', payload: any) => {
-    if (isRecording) {
+    if (isRecording && recordSource === 'web') {
       recordedEventsRef.current.push({
         type,
         timestamp: Date.now() - startTimeRef.current,
@@ -84,7 +133,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
       });
       setEventCount(prev => prev + 1);
     }
-  }, [isRecording]);
+  }, [isRecording, recordSource]);
 
   const replayEvents = useCallback(async () => {
     if (isReplaying || recordedEventsRef.current.length === 0) return;
@@ -111,7 +160,13 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
           } else if (event.type === 'scroll') {
             await clientRef.current.controller.injectScroll(event.payload);
           } else if (event.type === 'key') {
-            await clientRef.current.controller.injectKeyCode(event.payload);
+            const payload = {
+                action: event.payload.action as AndroidKeyEventAction,
+                keyCode: event.payload.keyCode as AndroidKeyCode,
+                metaState: (event.payload.metaState ?? AndroidKeyEventMeta.None) as AndroidKeyEventMeta,
+                repeat: event.payload.repeat ?? 0,
+            };
+            await clientRef.current.controller.injectKeyCode(payload);
           }
         } catch (e) {
           console.error('Replay injection failed', e);
@@ -299,9 +354,9 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
 
     if (keyCode) {
       const payload = {
-        action: AndroidKeyEventAction.Down,
-        keyCode,
-        metaState: AndroidKeyEventMeta.None,
+        action: AndroidKeyEventAction.Down as AndroidKeyEventAction,
+        keyCode: keyCode as AndroidKeyCode,
+        metaState: AndroidKeyEventMeta.None as AndroidKeyEventMeta,
         repeat: 0,
       };
 
@@ -333,9 +388,9 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
 
     if (keyCode) {
       const payload = {
-        action: AndroidKeyEventAction.Up,
-        keyCode,
-        metaState: AndroidKeyEventMeta.None,
+        action: AndroidKeyEventAction.Up as AndroidKeyEventAction,
+        keyCode: keyCode as AndroidKeyCode,
+        metaState: AndroidKeyEventMeta.None as AndroidKeyEventMeta,
         repeat: 0,
       };
 
@@ -450,6 +505,20 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
         </div>
         
         <div className="flex items-center gap-2">
+            {!isRecording && !isReplaying && (
+                <div className="flex items-center gap-1 bg-gray-700 rounded px-2 py-0.5 mr-2">
+                    <span className="text-xs text-gray-400">Source:</span>
+                    <select 
+                        value={recordSource}
+                        onChange={(e) => setRecordSource(e.target.value as 'web' | 'device')}
+                        className="bg-transparent text-white text-xs outline-none border-none cursor-pointer"
+                    >
+                        <option value="web" className="bg-gray-800">Web Input</option>
+                        <option value="device" className="bg-gray-800">Device Input</option>
+                    </select>
+                </div>
+            )}
+
             {!isRecording && !isReplaying && (
                 <button 
                     onClick={startRecording}
