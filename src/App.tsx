@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Adb, AdbDaemonTransport } from '@yume-chan/adb';
+import type { AdbDaemonConnection } from '@yume-chan/adb';
 import { AdbWebUsbBackendManager } from '@yume-chan/adb-backend-webusb';
 import AdbWebCredentialStore from '@yume-chan/adb-credential-web';
 import { ScrcpyPlayer } from './components/ScrcpyPlayer';
@@ -21,13 +22,13 @@ function App() {
       }
 
       setStatus('Connecting...');
-      const connection = await backend.connect() as any;
+      const connection = await backend.connect();
       
       const credentialStore = new AdbWebCredentialStore();
       
       const transport = await AdbDaemonTransport.authenticate({
         serial: backend.serial,
-        connection,
+        connection: connection as unknown as AdbDaemonConnection,
         credentialStore,
       });
 
@@ -37,10 +38,11 @@ function App() {
       setStatus('Connected');
       setDeviceInfo(`${adb.banner.model} (${adb.banner.product}) - ${adb.banner.device}`);
       
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      setStatus(`Error: ${e.message}`);
-      if (e.message && e.message.includes('No device selected')) {
+      const message = e instanceof Error ? e.message : String(e);
+      setStatus(`Error: ${message}`);
+      if (message && message.includes('No device selected')) {
         setStatus('Disconnected');
       }
     }

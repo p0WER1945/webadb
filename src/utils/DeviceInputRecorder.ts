@@ -1,4 +1,5 @@
 import { Adb } from '@yume-chan/adb';
+import type { AdbShellProtocolProcess } from '@yume-chan/adb';
 import { AndroidKeyCode, AndroidKeyEventAction } from '@yume-chan/scrcpy';
 
 export interface DeviceInputEvent {
@@ -14,7 +15,7 @@ export interface DeviceInputEvent {
 
 export class DeviceInputRecorder {
   private adb: Adb;
-  private process: any; // AdbSubprocess
+  private process: AdbShellProtocolProcess | undefined;
   private abortController: AbortController | null = null;
   private buffer = '';
   
@@ -36,7 +37,8 @@ export class DeviceInputRecorder {
         throw new Error('ADB Shell protocol not supported');
       }
       const process = await this.adb.subprocess.shellProtocol.spawn('getevent -p');
-      const reader = process.stdout.pipeThrough(new TextDecoderStream()).getReader();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const reader = (process.stdout as any).pipeThrough(new TextDecoderStream()).getReader();
       let output = '';
       
       while (true) {
@@ -53,12 +55,12 @@ export class DeviceInputRecorder {
       this.touchDevicePath = null;
       this.keyDevicePaths = [];
       
-      const touchCandidates: {path: string, name: string, maxX: number, maxY: number}[] = [];
+      const touchCandidates: {path: string, name: string, minX: number, maxX: number, minY: number, maxY: number}[] = [];
 
       for (const device of devices) {
         const lines = device.split('\n');
         const firstLine = lines[0]; 
-        const matchPath = firstLine.match(/: (.*)/);
+        const matchPath = firstLine ? firstLine.match(/: (.*)/) : null;
         if (!matchPath) continue;
         
         const path = matchPath[1].trim();
@@ -93,7 +95,7 @@ export class DeviceInputRecorder {
             }
             
             if (maxX > 0 && maxY > 0) {
-                touchCandidates.push({ path, name, maxX, maxY });
+                touchCandidates.push({ path, name, minX, maxX, minY, maxY });
             }
         }
 
@@ -110,10 +112,6 @@ export class DeviceInputRecorder {
                            device.includes('KEY_VOLUMEDOWN') || device.includes('0072');
         
         if (isKeyDevice || hasKeyCaps) {
-            // Avoid adding the touch device as a key device if possible, 
-            // though some touchscreens have keys. 
-            // But usually physical buttons are on separate devices like gpio_keys.
-            // Let's add it. Duplicates handled by event loop.
             if (!this.keyDevicePaths.includes(path)) {
                 this.keyDevicePaths.push(path);
                 console.log(`Found key device: ${path} (${name})`);
@@ -144,13 +142,11 @@ export class DeviceInputRecorder {
         })[0];
         
         this.touchDevicePath = best.path;
+        this.minX = best.minX;
         this.maxX = best.maxX;
+        this.minY = best.minY;
         this.maxY = best.maxY;
         console.log(`Selected touch device: ${best.path} (${best.name})`);
-        
-        // Remove touch device from key devices to avoid redundancy/confusion, 
-        // unless we really want to capture keys from it (which we handle in touch logic mostly)
-        // But actually, we want to listen to it. The filtering in start() handles specific event types.
       }
 
       return !!(this.touchDevicePath || this.keyDevicePaths.length > 0);
@@ -175,7 +171,6 @@ export class DeviceInputRecorder {
     }
 
     // Monitor all devices using getevent -l (no args)
-    // This is more robust than passing multiple paths which might not be supported
     const cmd = `getevent -l`;
     console.log('Starting recording with:', cmd);
     
@@ -183,7 +178,8 @@ export class DeviceInputRecorder {
     
     // Check for stderr
     if (this.process.stderr) {
-        const errReader = this.process.stderr.pipeThrough(new TextDecoderStream()).getReader();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const errReader = (this.process.stderr as any).pipeThrough(new TextDecoderStream()).getReader();
         (async () => {
             try {
                 while (true) {
@@ -191,13 +187,14 @@ export class DeviceInputRecorder {
                     if (done) break;
                     if (value) console.error('getevent stderr:', value);
                 }
-            } catch (e) {
+            } catch {
                 // Ignore
             }
         })();
     }
     
-    const reader = this.process.stdout.pipeThrough(new TextDecoderStream()).getReader();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reader = (this.process.stdout as any).pipeThrough(new TextDecoderStream()).getReader();
     
     let currentX = -1;
     let currentY = -1;
@@ -233,7 +230,7 @@ export class DeviceInputRecorder {
           
           if (!isTouchDevice && !isKeyDevice) continue;
 
-          let typeIndex = parts.findIndex(p => p.startsWith('EV_'));
+          const typeIndex = parts.findIndex(p => p.startsWith('EV_'));
           if (typeIndex === -1) continue;
           
           const type = parts[typeIndex];

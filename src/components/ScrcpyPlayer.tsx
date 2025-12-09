@@ -14,7 +14,10 @@ import {
   AndroidKeyEventAction, 
   AndroidKeyCode,
   AndroidKeyEventMeta,
-  AndroidMotionEventAction
+  AndroidMotionEventAction,
+  ScrcpyInjectTouchControlMessage,
+  ScrcpyInjectScrollControlMessage,
+  ScrcpyInjectKeyCodeControlMessage
 } from '@yume-chan/scrcpy';
 import { DeviceInputRecorder } from '../utils/DeviceInputRecorder';
 
@@ -47,15 +50,15 @@ const KeyMap: Record<string, AndroidKeyCode> = {
 };
 
 type RecordedEvent = 
-  | { type: 'touch'; timestamp: number; payload: any }
-  | { type: 'scroll'; timestamp: number; payload: any }
-  | { type: 'key'; timestamp: number; payload: any };
+  | { type: 'touch'; timestamp: number; payload: Omit<ScrcpyInjectTouchControlMessage, 'type'> }
+  | { type: 'scroll'; timestamp: number; payload: Omit<ScrcpyInjectScrollControlMessage, 'type'> }
+  | { type: 'key'; timestamp: number; payload: Omit<ScrcpyInjectKeyCodeControlMessage, 'type'> };
 
 export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<string>('Initializing...');
   const runningRef = useRef(false);
-  const clientRef = useRef<AdbScrcpyClient<any> | undefined>(undefined);
+  const clientRef = useRef<AdbScrcpyClient<AdbScrcpyOptions3_3_1<boolean>> | undefined>(undefined);
   const videoSizeRef = useRef<{ width: number; height: number } | undefined>(undefined);
   const deviceInputRecorderRef = useRef<DeviceInputRecorder | undefined>(undefined);
 
@@ -142,13 +145,16 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
     }
   }, []);
 
-  const recordEvent = useCallback((type: 'touch' | 'scroll' | 'key', payload: any) => {
+  const recordEvent = useCallback(<T extends RecordedEvent['type']>(
+    type: T, 
+    payload: Extract<RecordedEvent, { type: T }>['payload']
+  ) => {
     if (isRecording && recordSource === 'web') {
       recordedEventsRef.current.push({
         type,
         timestamp: Date.now() - startTimeRef.current,
         payload
-      });
+      } as RecordedEvent);
       setEventCount(prev => prev + 1);
     }
   }, [isRecording, recordSource]);
@@ -196,7 +202,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
   }, [isReplaying]);
 
   const saveEvents = useCallback(() => {
-    const json = JSON.stringify(recordedEventsRef.current, (key, value) => {
+    const json = JSON.stringify(recordedEventsRef.current, (_key, value) => {
         if (typeof value === 'bigint') {
             return value.toString();
         }
@@ -221,17 +227,18 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
         const events = JSON.parse(event.target?.result as string);
         if (Array.isArray(events)) {
           // Fix BigInt for touch events
-          const processedEvents = events.map((ev: any) => {
-            if (ev.type === 'touch' && ev.payload && typeof ev.payload.pointerId === 'string') {
+          const processedEvents = events.map((ev: unknown) => {
+             const e = ev as { type?: string; payload?: { pointerId?: string | bigint; [key: string]: unknown }; [key: string]: unknown };
+             if (e.type === 'touch' && e.payload && typeof e.payload.pointerId === 'string') {
                  return {
-                    ...ev,
+                    ...e,
                     payload: {
-                        ...ev.payload,
-                        pointerId: BigInt(ev.payload.pointerId)
+                        ...e.payload,
+                        pointerId: BigInt(e.payload.pointerId)
                     }
-                 };
-            }
-            return ev;
+                 } as RecordedEvent;
+             }
+             return e as RecordedEvent;
           });
           recordedEventsRef.current = processedEvents;
           setEventCount(processedEvents.length);
@@ -423,7 +430,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
   }, [isReplaying, recordEvent]);
 
   useEffect(() => {
-    let client: AdbScrcpyClient<any> | undefined;
+    let client: AdbScrcpyClient<AdbScrcpyOptions3_3_1<boolean>> | undefined;
     let decoder: WebCodecsVideoDecoder | undefined;
 
     const start = async () => {
@@ -438,7 +445,8 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
         // Push server to device
         await AdbScrcpyClient.pushServer(
           device,
-          response.body as any, // Cast to any to bypass type mismatch if necessary
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          response.body as any, 
           '/data/local/tmp/scrcpy-server.jar'
         );
 
@@ -484,7 +492,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
                 renderer,
             });
 
-            stream.pipeTo(decoder.writable).catch(e => {
+            stream.pipeTo(decoder.writable).catch((e: unknown) => {
                 console.error('Stream error:', e);
             });
             
@@ -493,15 +501,17 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
             // Auto focus container for keyboard events
             containerRef.current.focus();
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error(e);
         if (e instanceof AdbScrcpyExitedError) {
              const msg = `Server Error: ${e.output.join('\n')}`;
              console.error(msg);
              setStatus(msg);
         } else {
-             setStatus(`Error: ${e.message}`);
+             const message = e instanceof Error ? e.message : String(e);
+             setStatus(`Error: ${message}`);
         }
+        runningRef.current = false;
       }
     };
 
