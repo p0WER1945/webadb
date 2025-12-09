@@ -79,35 +79,53 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
         
         // Start recording in background
         recorder.start((event) => {
-            if (!videoSizeRef.current) return;
-            const { width, height } = videoSizeRef.current;
-            
-            // Map normalized coords to pixels
-            const pointerX = event.x * width;
-            const pointerY = event.y * height;
-            
-            const action = event.action === 'down' ? AndroidMotionEventAction.Down :
-                           event.action === 'up' ? AndroidMotionEventAction.Up :
-                           AndroidMotionEventAction.Move;
-                           
-            const payload = {
-                action,
-                pointerId: BigInt(0),
-                pointerX: Math.max(0, Math.min(pointerX, width)),
-                pointerY: Math.max(0, Math.min(pointerY, height)),
-                videoWidth: width,
-                videoHeight: height,
-                pressure: action === AndroidMotionEventAction.Up ? 0 : 1,
-                actionButton: 0,
-                buttons: 1, // Simulate primary button
-            };
-            
-            recordedEventsRef.current.push({
-                type: 'touch',
-                timestamp: Date.now() - startTimeRef.current,
-                payload
-            });
-            setEventCount(prev => prev + 1);
+            if (event.type === 'touch') {
+                if (!videoSizeRef.current || event.x === undefined || event.y === undefined || !event.action) return;
+                const { width, height } = videoSizeRef.current;
+                
+                // Map normalized coords to pixels
+                const pointerX = event.x * width;
+                const pointerY = event.y * height;
+                
+                const action = event.action === 'down' ? AndroidMotionEventAction.Down :
+                               event.action === 'up' ? AndroidMotionEventAction.Up :
+                               AndroidMotionEventAction.Move;
+                               
+                const payload = {
+                    action,
+                    pointerId: BigInt(0),
+                    pointerX: Math.max(0, Math.min(pointerX, width)),
+                    pointerY: Math.max(0, Math.min(pointerY, height)),
+                    videoWidth: width,
+                    videoHeight: height,
+                    pressure: action === AndroidMotionEventAction.Up ? 0 : 1,
+                    actionButton: 0,
+                    buttons: 1, // Simulate primary button
+                };
+                
+                recordedEventsRef.current.push({
+                    type: 'touch',
+                    timestamp: Date.now() - startTimeRef.current,
+                    payload
+                });
+                setEventCount(prev => prev + 1);
+            } else if (event.type === 'key') {
+                if (!event.keyCode || event.keyAction === undefined) return;
+                
+                const payload = {
+                    action: event.keyAction,
+                    keyCode: event.keyCode,
+                    metaState: AndroidKeyEventMeta.None,
+                    repeat: 0,
+                };
+
+                recordedEventsRef.current.push({
+                    type: 'key',
+                    timestamp: Date.now() - startTimeRef.current,
+                    payload
+                });
+                setEventCount(prev => prev + 1);
+            }
         }).catch (e => {
             console.error('Device recording failed', e);
             setStatus('Device recording failed');
