@@ -100,15 +100,13 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 bg-gray-900 relative overflow-hidden flex items-center justify-center">
-        {scrcpyEnabled && device ? (
-          <div className="w-full h-full p-4">
-             <ScrcpyPlayer device={device} />
-          </div>
-        ) : (
-          <div className="text-center text-gray-500">
-            <p className="text-lg mb-2">Connect a device and start Scrcpy to view screen</p>
-            <p className="text-sm opacity-70">Status: {status}</p>
+      <main className="flex-1 overflow-hidden relative flex">
+        {device && (
+          <ScrcpyPlayer device={device} enabled={scrcpyEnabled} />
+        )}
+        {!device && (
+          <div className="flex items-center justify-center w-full h-full text-gray-400">
+            No device connected
           </div>
         )}
       </main>

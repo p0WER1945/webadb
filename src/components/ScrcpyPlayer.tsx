@@ -23,6 +23,7 @@ import { DeviceInputRecorder } from '../utils/DeviceInputRecorder';
 
 interface ScrcpyPlayerProps {
   device: Adb;
+  enabled?: boolean;
 }
 
 // Basic key mapping
@@ -54,7 +55,7 @@ type RecordedEvent =
   | { type: 'scroll'; timestamp: number; payload: Omit<ScrcpyInjectScrollControlMessage, 'type'> }
   | { type: 'key'; timestamp: number; payload: Omit<ScrcpyInjectKeyCodeControlMessage, 'type'> };
 
-export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
+export function ScrcpyPlayer({ device, enabled = true }: ScrcpyPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<string>('Initializing...');
   const runningRef = useRef(false);
@@ -454,6 +455,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
         // Disable audio for stability, enable control
         const options = new AdbScrcpyOptions3_3_1({
             audio: false,
+            video: enabled,
             control: true,
         });
         
@@ -465,41 +467,84 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
         
         clientRef.current = client;
 
-        setStatus('Connecting video...');
-        const videoStream = await client.videoStream;
-        
-        if (videoStream && containerRef.current) {
-            const { metadata, stream } = videoStream;
-            videoSizeRef.current = { width: metadata.width ?? 0, height: metadata.height ?? 0 };
+        if (enabled) {
+            setStatus('Connecting video...');
+            const videoStream = await client.videoStream;
             
-            // Create a canvas element
-            const canvas = document.createElement('canvas');
-            canvas.className = 'w-full h-full object-contain pointer-events-none'; // Ensure clicks go to container
-            // Clear previous content
-            containerRef.current.innerHTML = '';
-            containerRef.current.appendChild(canvas);
+            if (videoStream && containerRef.current) {
+                const { metadata, stream } = videoStream;
+                videoSizeRef.current = { width: metadata.width ?? 0, height: metadata.height ?? 0 };
+                
+                // Create a canvas element
+                const canvas = document.createElement('canvas');
+                canvas.className = 'w-full h-full object-contain pointer-events-none'; // Ensure clicks go to container
+                // Clear previous content
+                containerRef.current.innerHTML = '';
+                containerRef.current.appendChild(canvas);
 
-            let renderer;
-            try {
-                renderer = new WebGLVideoFrameRenderer(canvas);
-            } catch (e) {
-                console.warn('WebGL not supported, falling back to Bitmap renderer', e);
-                renderer = new BitmapVideoFrameRenderer(canvas);
+                let renderer;
+                try {
+                    renderer = new WebGLVideoFrameRenderer(canvas);
+                } catch (e) {
+                    console.warn('WebGL not supported, falling back to Bitmap renderer', e);
+                    renderer = new BitmapVideoFrameRenderer(canvas);
+                }
+
+                decoder = new WebCodecsVideoDecoder({
+                    codec: metadata.codec,
+                    renderer,
+                });
+
+                stream.pipeTo(decoder.writable).catch((e: unknown) => {
+                    console.error('Stream error:', e);
+                });
+                
+                setStatus('Streaming');
+                
+                // Auto focus container for keyboard events
+                containerRef.current.focus();
             }
-
-            decoder = new WebCodecsVideoDecoder({
-                codec: metadata.codec,
-                renderer,
-            });
-
-            stream.pipeTo(decoder.writable).catch((e: unknown) => {
-                console.error('Stream error:', e);
-            });
+        } else {
+            setStatus('Video Disabled (Control Active)');
+            if (containerRef.current) {
+                containerRef.current.innerHTML = '';
+                const msg = document.createElement('div');
+                msg.className = 'w-full h-full flex items-center justify-center text-gray-500 select-none';
+                msg.textContent = 'Video Disabled (Automation Only)';
+                containerRef.current.appendChild(msg);
+            }
             
-            setStatus('Streaming');
-            
-            // Auto focus container for keyboard events
-            containerRef.current.focus();
+            // Fetch screen size if video is disabled (needed for input injection/recording)
+            try {
+                // Ensure shell protocol is available
+                if (!device.subprocess.shellProtocol) {
+                     // This might happen if user hasn't authenticated properly or device doesn't support it?
+                     // Usually it should be supported.
+                } else {
+                    const process = await device.subprocess.shellProtocol.spawn('wm size');
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const reader = (process.stdout as any).pipeThrough(new TextDecoderStream()).getReader();
+                    let output = '';
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        output += value;
+                    }
+                    
+                    const match = output.match(/Physical size: (\d+)x(\d+)/);
+                    if (match) {
+                        videoSizeRef.current = {
+                            width: parseInt(match[1], 10),
+                            height: parseInt(match[2], 10)
+                        };
+                        console.log('Fetched screen size:', videoSizeRef.current);
+                        setStatus('Ready (Video Disabled)');
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch screen size', e);
+                setStatus('Ready (Video Disabled, Size Unknown)');
+            }
         }
       } catch (e: unknown) {
         console.error(e);
@@ -523,7 +568,7 @@ export function ScrcpyPlayer({ device }: ScrcpyPlayerProps) {
       decoder?.dispose();
       clientRef.current = undefined;
     };
-  }, [device]);
+  }, [device, enabled]);
 
   return (
     <div className="w-full h-full flex flex-col">
